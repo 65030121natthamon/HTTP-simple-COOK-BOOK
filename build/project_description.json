@@ -1,7 +1,7 @@
 {
     "version":            "1.1",
     "project_name":       "https_server",
-    "project_version":    "f7b14f1-dirty",
+    "project_version":    "4d033fd-dirty",
     "project_path":       "C:/GitHubRepos/simple",
     "idf_path":           "C:/Users/Lenovo/esp/v5.2.2/esp-idf",
     "build_dir":          "C:/GitHubRepos/simple/build",
