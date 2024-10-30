@@ -1,69 +1,109 @@
-| Supported Targets | ESP32 | ESP32-C2 | ESP32-C3 | ESP32-C6 | ESP32-H2 | ESP32-S2 | ESP32-S3 |
-| ----------------- | ----- | -------- | -------- | -------- | -------- | -------- | -------- |
+## แนวทางการทำงาน ESP32 project cook book
+1. ระบุตัวอย่างที่ใช้ ว่าเอามาจากตัวอย่างไหน
+  ใช้ https_server_simple
+![image](https://github.com/user-attachments/assets/cf72827d-e588-419d-8ab3-c9a365efe9c9)
 
-# HTTP server with SSL support using OpenSSL
+3. ระบุว่า จะแก้ไขตรงไหนบ้าง เพื่ออะไร
+   ส่งค่าวัดแสงขึ้นไปบน web แก้ในส่วนของ main.c
+```
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <esp_log.h>
+#include <nvs_flash.h>
+#include <sys/param.h>
+#include "esp_netif.h"
+#include "protocol_examples_common.h"
+#include "esp_tls_crypto.h"
+#include <esp_http_server.h>
+#include "esp_event.h"
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_oneshot.h"
 
-This example creates a SSL server that returns a simple HTML page when you visit its root URL.
+#define EXAMPLE_HTTP_QUERY_KEY_MAX_LEN  (64)
+static adc_oneshot_unit_handle_t adc1_handle;
+static const char *TAG = "example";
 
-See the `esp_https_server` component documentation for details.
+char analogtxt[128];
+int adc_raw;
 
-## How to use example
-Before project configuration and build, be sure to set the correct chip target using `idf.py set-target <chip_name>`.
+// ฟังก์ชันสำหรับการแสดงค่า LDR
+static esp_err_t hello_get_handler(httpd_req_t *req)
+{
+    // อ่านค่าจาก LDR (ADC)
+    adc_oneshot_read(adc1_handle, ADC_CHANNEL_0, &adc_raw);
 
-### Configure the project
+    // อัพเดทข้อความที่จะแสดงผล
+    sprintf(analogtxt, "<H1> LDR Value = %d </H1>", adc_raw);
+
+    // ส่งข้อมูลไปยังผู้ใช้
+    httpd_resp_send(req, analogtxt, HTTPD_RESP_USE_STRLEN);
+    
+    return ESP_OK;
+}
+
+static const httpd_uri_t hello = {
+    .uri       = "/hello",
+    .method    = HTTP_GET,
+    .handler   = hello_get_handler,
+    .user_ctx  = analogtxt
+};
+
+static httpd_handle_t start_webserver(void)
+{
+    httpd_handle_t server = NULL;
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+
+    ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
+    if (httpd_start(&server, &config) == ESP_OK) {
+        ESP_LOGI(TAG, "Registering URI handlers");
+        httpd_register_uri_handler(server, &hello);
+        return server;
+    }
+
+    ESP_LOGI(TAG, "Error starting server!");
+    return NULL;
+}
+
+void app_main(void)
+{
+    static httpd_handle_t server = NULL;
+
+    ESP_ERROR_CHECK(nvs_flash_init());
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    // ตั้งค่า ADC สำหรับ LDR
+    adc_oneshot_unit_init_cfg_t init_config1 = {
+        .unit_id = ADC_UNIT_1,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config1, &adc1_handle));
+
+    adc_oneshot_chan_cfg_t config = {
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+        .atten = ADC_ATTEN_DB_11,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, ADC_CHANNEL_0, &config));
+
+    // เชื่อมต่อ Wi-Fi และเริ่ม HTTP server
+    ESP_ERROR_CHECK(example_connect());
+    server = start_webserver();
+
+    while (server) {
+        sleep(5);
+    }
+}
 
 ```
-idf.py menuconfig
-```
-Open the project configuration menu (`idf.py menuconfig`) to configure Wi-Fi or Ethernet. See "Establishing Wi-Fi or Ethernet Connection" section in [examples/protocols/README.md](../../README.md) for more details.
-
-### Build and Flash
-
-Build the project and flash it to the board, then run monitor tool to view serial output:
-
-```
-idf.py -p PORT flash monitor
-```
-
-(Replace PORT with the name of the serial port to use.)
-
-(To exit the serial monitor, type ``Ctrl-]``.)
-
-See the Getting Started Guide for full steps to configure and use ESP-IDF to build projects.
-
-## Certificates
-
-You will need to approve a security exception in your browser. This is because of a self signed
-certificate; this will be always the case, unless you preload the CA root into your browser/system
-as trusted.
-
-You can generate a new certificate using the OpenSSL command line tool:
-
-```
-openssl req -newkey rsa:2048 -nodes -keyout prvtkey.pem -x509 -days 3650 -out cacert.pem -subj "/CN=ESP32 HTTPS server example"
-```
-
-Expiry time and metadata fields can be adjusted in the invocation.
-
-Please see the openssl man pages (man openssl-req) for more details.
-
-It is **strongly recommended** to not reuse the example certificate in your application;
-it is included only for demonstration.
-
-## Example Output
-
-```
-I (8596) example: Starting server
-I (8596) esp_https_server: Starting server
-I (8596) esp_https_server: Server listening on port 443
-I (8596) example: Registering URI handlers
-I (8606) esp_netif_handlers: example_connect: sta ip: 192.168.194.219, mask: 255.255.255.0, gw: 192.168.194.27
-I (8616) example_connect: Got IPv4 event: Interface "example_connect: sta" address: 192.168.194.219
-I (9596) example_connect: Got IPv6 event: Interface "example_connect: sta" address: fe80:0000:0000:0000:266f:28ff:fe80:2c74, type: ESP_IP6_ADDR_IS_LINK_LOCAL
-I (9596) example_connect: Connected to example_connect: sta
-W (9606) wifi:<ba-add>idx:0 (ifx:0, ee:6d:19:60:f6:0e), tid:0, ssn:2, winSize:64
-I (9616) example_connect: - IPv4 address: 192.168.194.219
-I (9616) example_connect: - IPv6 address: fe80:0000:0000:0000:266f:28ff:fe80:2c74, type: ESP_IP6_ADDR_IS_LINK_LOCAL
-W (14426) wifi:<ba-add>idx:1 (ifx:0, ee:6d:19:60:f6:0e), tid:4, ssn:0, winSize:64
-I (84896) esp_https_server: performing session handshake
-```
+3. แสดงขั้นตอนการทำ project
+ - สร้างexample และทำการ build ทดสอบก่อน
+ - หลังจากนั้นทำการ เปลี่ยน config WiFi เป็น internet / hotsport ของตัวเอง
+ - แก้ไขโค้ดในส่วนของ main.c ว่าต้องการให้หน้า web แสดงข้อความใดที่จะส่งข้อมูลจาก esp32 ขึ้นไป
+ - ในส่วนนี้เลือก LDR วัดแสง และทำการเปลี่ยน โค้ดในส่วนของการต้องการให้วัดแสง (ข้อ2)
+ - ทำการ build flash monitor
+ - นำ ip ไปพิมพ์ใน บราวเซอร์
+ -  ![image](https://github.com/user-attachments/assets/f2a25636-515c-4792-b83d-a5f624ab8a61)
+5. แสดงผลการทำ project
+- จะแสดงผลดังรูป![image](https://github.com/user-attachments/assets/17c99cf3-8a82-4d06-8cfc-6b3f237b47ee)
+6. สรุปผลการทำ project 
+- เป็นการสร้าง webserver ในการเรียกดูค่าวัดแสง LDR บนบอร์ด ESP32
